@@ -14,7 +14,7 @@ def inter(rs):
     return sum(map(lambda r: r.length, rs))
 
 
-def extract_rules_from_tree(tree, features, xmin, xmax):
+def extract_rules_from_tree(tree, features, xmin, xmax, get_leaf=False):
     dt = tree.tree_
     
     def visitor(node, depth, cond=None, rule_list=None):
@@ -47,7 +47,8 @@ def extract_rules_from_tree(tree, features, xmin, xmax):
             
             # print (RICE.Rule(new_cond))
             new_rg = RICE.Rule(copy.deepcopy(new_cond))
-            rule_list.append(new_rg)
+            if get_leaf is False:
+                rule_list.append(new_rg)
             
             rule_list = visitor(dt.children_left[node], depth + 1,
                                 new_cond, rule_list)
@@ -79,10 +80,14 @@ def extract_rules_from_tree(tree, features, xmin, xmax):
             
             # print (RICE.Rule(new_cond))
             new_rg = RICE.Rule(copy.deepcopy(new_cond))
-            rule_list.append(new_rg)
+            if get_leaf is False:
+                rule_list.append(new_rg)
             
             rule_list = visitor(dt.children_right[node], depth + 1, new_cond, rule_list)
-        
+
+        elif get_leaf:
+            rule_list.append(RICE.Rule(copy.deepcopy(cond)))
+
         return rule_list
     
     rule_list = visitor(0, 1)

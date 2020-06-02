@@ -11,15 +11,17 @@ from collections import Counter
 import numpy as np
 import pandas as pd
 import scipy.spatial.distance as scipy_dist
+from joblib import Parallel, delayed
 
 from matplotlib import patches
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
 
 from sklearn.base import BaseEstimator
 from sklearn.metrics import accuracy_score, r2_score
 from sklearn.utils import check_array
-from sklearn.externals.joblib import Parallel, delayed
 from sklearn.cluster import KMeans
 
 """
