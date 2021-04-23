@@ -1,10 +1,8 @@
-import copy
-
-import numpy as np
-import matplotlib.pyplot as plt
+from sklearn.datasets import load_boston, load_diabetes
+from sklearn.metrics import r2_score
 from sklearn.model_selection import train_test_split
-
-import RICE
+from RICE.rice import RICE
+import numpy as np
 
 
 def make_y(x, noise, th_min=-0.4, th_max=0.4):
@@ -31,18 +29,6 @@ def make_condition(rg):
             rep += str(rg['BMax'][i])
             rep += ']'
     return rep
-
-
-nRows = 5000
-nCols = 2
-noise = 1.0
-h = 0.05
-
-np.random.seed(42)
-X = np.random.uniform(low=-1, high=1,
-                      size=(nRows, nCols))
-
-cm = plt.cm.coolwarm  # plt.cm.binary
 
 
 def test_min(bins, df, rg_id):
@@ -76,33 +62,54 @@ def test_max(bins, df, rg_id, nb_bucket):
 
 
 def Mrn(rg1, rs):
-    act = copy.copy(rg1.get_param('activation'))
+    act = rg1.activation
     for rg2 in rs:
         act = map(lambda val1, val2: 0 if val1 == 0 else val1 + val2, act, rg2.get_param('activation'))
         act = np.array(act)
     return max(act) - 1
 
 
-x_vect = X[:, 0]
-th_min = -0.4
-th_max = 0.4
+if __name__ == '__main__':
+    test_size = 0.30
+    X, y = load_boston(return_X_y=True)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size,
+                                                        random_state=42)
+    rice = RICE(lmax=3)
+    rice.fit(X_train, y_train)
+    pred, bad_points = rice.predict(X_test)
+    print(f'There are {sum(bad_points) / len(y_test)}% of observations without prediction.')
+    print('Boston: ', r2_score(y_test[np.isfinite(pred)], pred[np.isfinite(pred)]))
+    print(f'Estimated variance: {rice.sigma2}')
+    # Boston:
 
-y = make_y(x_vect, noise, th_min, th_max)
+    X, y = load_diabetes(return_X_y=True)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size,
+                                                        random_state=42)
+    rice = RICE(lmax=3)
+    rice.fit(X_train, y_train)
+    pred, bad_points = rice.predict(X_test)
+    print(f'There are {sum(bad_points) / len(y_test)}% of observations without prediction.')
+    print('Diabetes: ', r2_score(y_test[np.isfinite(pred)], pred[np.isfinite(pred)]))
+    print(f'Estimated variance: {rice.sigma2}')
+    # Diabetes:
 
-test_size = 0.40
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size,
-                                                    random_state=42)
+    nRows = 5000
+    nCols = 2
+    noise = 1.0
+    h = 0.05
 
-rice_lin = RICE.RICE()
+    np.random.seed(42)
+    X = np.random.uniform(low=-1, high=1,
+                          size=(nRows, nCols))
+    x_vect = X[:, 0]
+    th_min = -0.4
+    th_max = 0.4
+    y = make_y(x_vect, noise, th_min, th_max)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size,
+                                                        random_state=42)
 
-rice_lin.fit(X_train, y_train)
-score = rice_lin.score(X_test, y_test)
-print(f'The score is: {score}')
-
-# x_min, x_max = X[:, 0].min(), X[:, 0].max() + h  # add left and right margins
-# y_min, y_max = X[:, 1].min(), X[:, 1].max() + h
-# xx, yy = np.meshgrid(np.arange(x_min, x_max, h),
-#                      np.arange(y_min, y_max, h))
-#
-# ZZ = rice_lin.predict(np.array(list(zip(xx.ravel(), yy.ravel()))), check_input=False)
-# ZZ = ZZ.reshape(xx.shape)
+    rice = RICE()
+    rice.fit(X_train, y_train)
+    score = rice.score(X_test, y_test)
+    print(f'The score is: {score}')
+    print(f'Estimated variance: {rice.sigma2}')

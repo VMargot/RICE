@@ -11,7 +11,6 @@ import numpy as np
 from joblib import Parallel, delayed
 from ruleskit import RuleSet
 from ruleskit import Rule
-from ruleskit.utils import rfunctions
 from sklearn.metrics import accuracy_score, r2_score
 from sklearn.utils import check_array
 
@@ -230,7 +229,7 @@ class RICE:
         # SELECTION PART
         # --------------
         print('----- Selection ------')
-        selected_rs = self.select_rules(rs, 0, np.mean(y))
+        selected_rs = self.select_rules(rs, 0, y.mean())
         self.selected_rs = selected_rs
 
         print('----- Fitting is over ------')
@@ -245,15 +244,13 @@ class RICE:
         then selects the best subset by minimization
         of the empirical risk
         """
-        rules_list = self.calc_length_1(discrete_xs, y, features_indexes, features_names)
-        rules_list = list(filter(lambda rule: rule.coverage >= self.covmin, rules_list))
+        rules_list = self.calc_length_1(discrete_xs, y, self.covmin, features_indexes, features_names)
 
         if len(rules_list) > 0:
             for k in range(2, self.lmax + 1):
                 print('Designing of rules of length %s' % str(k))
-                rules_length_k = self.calc_length_l(rules_list, discrete_xs, y, k)
+                rules_length_k = self.calc_length_l(rules_list, discrete_xs, y, k, self.covmin)
                 if len(rules_length_k) > 0:
-                    rules_length_k = list(filter(lambda rule: rule.coverage >= self.covmin, rules_length_k))
                     rules_list += rules_length_k
                 else:
                     print('No rule for length %s' % str(k))
@@ -264,7 +261,7 @@ class RICE:
             print('No rule found !')
             return RuleSet([])
 
-    def calc_length_1(self, discrete_xs: np.ndarray, y: np.ndarray,
+    def calc_length_1(self, discrete_xs: np.ndarray, y: np.ndarray, cov_min: float,
                       features_indexes: List[int], features_names: List[str]) -> List[Rule]:
         """
         Compute all rules of length one and keep the best.
@@ -272,17 +269,20 @@ class RICE:
         indices = zip(features_names, features_indexes)
         jobs = min(len(features_names), self.nb_jobs)
         if jobs == 1:
-            rules_list = [f.make_rules(c_name, c_idx, discrete_xs, y, self.criterion) for c_name, c_idx in indices]
+            rules_list = [f.make_rules(c_name, c_idx, discrete_xs, y, cov_min, self.criterion)
+                          for c_name, c_idx in indices]
         else:
             rules_list = Parallel(n_jobs=jobs, backend="multiprocessing")(
-                delayed(f.make_rules)(c_name, c_idx, discrete_xs, y, self.criterion) for c_name, c_idx in indices)
+                delayed(f.make_rules)(c_name, c_idx, discrete_xs, y, cov_min, self.criterion)
+                for c_name, c_idx in indices)
 
         rules_list = reduce(operator.add, rules_list)
         rules_list = sorted(rules_list, key=lambda x: x.criterion, reverse=False)
 
         return rules_list
 
-    def calc_length_l(self, rules: List[Rule], discrete_xs: np.ndarray, y: np.ndarray, length: int) -> List[Rule]:
+    def calc_length_l(self, rules: List[Rule], discrete_xs: np.ndarray, y: np.ndarray,
+                      length: int, cov_min: float) -> List[Rule]:
         """
         Returns a ruleset of rules with a given length.
         """
@@ -291,10 +291,10 @@ class RICE:
         rules_pairs = f.get_pair([list(filter(lambda rule: len(rule) == 1, rules)),
                                   list(filter(lambda rule: len(rule) == length - 1, rules))])
         if nb_jobs == 1:
-            rules_list = [f.fit_pair_rules(r1_r2, discrete_xs, y, criterion, length) for r1_r2 in rules_pairs]
+            rules_list = [f.fit_pair_rules(r1_r2, discrete_xs, y, criterion, length, cov_min) for r1_r2 in rules_pairs]
         else:
             rules_list = Parallel(n_jobs=nb_jobs, backend="multiprocessing")(
-                delayed(f.fit_pair_rules)(r1_r2, discrete_xs, y, criterion, length) for r1_r2 in rules_pairs)
+                delayed(f.fit_pair_rules)(r1_r2, discrete_xs, y, criterion, length, cov_min) for r1_r2 in rules_pairs)
         rules_list = list(filter(lambda rule: rule is not None, rules_list))
         rules_list = sorted(rules_list, key=lambda x: x.criterion, reverse=False)
 
@@ -436,6 +436,7 @@ class RICE:
         selected_rs = self.selected_rs
 
         prediction_vector, no_predictions = f.predict(selected_rs, discrete_xs, y_train)
+        print(f'There are {sum(no_predictions)} observations without prediction.')
         return prediction_vector, no_predictions
 
     def score(self, x, y, sample_weight=None):
@@ -464,7 +465,6 @@ class RICE:
             Mean accuracy of self.predict(X) wrt. y in {0,1}
         """
         prediction_vector, no_predictions = self.predict(x)
-        print(f'There are {sum(no_predictions)} observations without prediction.')
         prediction_vector = np.nan_to_num(prediction_vector)
 
         nan_val = np.argwhere(np.isnan(y))

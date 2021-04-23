@@ -5,49 +5,16 @@ import numpy as np
 from collections import Counter
 from sklearn.cluster import KMeans
 
+from RICE.ricerule import RiceRule
+
 from ruleskit import Activation
-from ruleskit import Rule
 from ruleskit import RuleSet
 from ruleskit import HyperrectangleCondition
 from ruleskit.utils.rfunctions import conditional_mean
 
 
-def make_condition(rule):
-    """
-    Evaluate all suitable rules (i.e satisfying all criteria)
-    on a given feature.
-    Parameters
-    ----------
-    rule : {rule type}
-           A rule
-
-    Return
-    ------
-    conditions_str : {str type}
-                     A new string for the condition of the rule
-    """
-    conditions = rule.conditions.get_attr()
-    length = len(rule)
-    conditions_str = ''
-    for i in range(length):
-        if i > 0:
-            conditions_str += ' & '
-
-        conditions_str += conditions[0][i]
-        if conditions[2][i] == conditions[3][i]:
-            conditions_str += ' = '
-            conditions_str += str(conditions[2][i])
-        else:
-            conditions_str += r' $\in$ ['
-            conditions_str += str(conditions[2][i])
-            conditions_str += ', '
-            conditions_str += str(conditions[3][i])
-            conditions_str += ']'
-
-    return conditions_str
-
-
-def make_rules(feature_name: str, feature_index: int, xs: np.ndarray, y: np.ndarray, criterion: str) -> List[Rule]:
+def make_rules(feature_name: str, feature_index: int, xs: np.ndarray,
+               y: np.ndarray, cov_min: float, criterion: str) -> List[RiceRule]:
     """
     Evaluate all suitable rules (i.e satisfying all criteria)
     on a given feature.
@@ -65,6 +32,8 @@ def make_rules(feature_name: str, feature_index: int, xs: np.ndarray, y: np.ndar
 
     y : {array-like, shape = [n]}
         The normalized target values (real numbers).
+
+    cov_min
 
     criterion : {string type}
              The method mse_function or mse_function criterion
@@ -88,15 +57,16 @@ def make_rules(feature_name: str, feature_index: int, xs: np.ndarray, y: np.ndar
                                                  bmins=[bmin],
                                                  bmaxs=[bmax])
 
-            rule = Rule(conditions)
-            rule.fit(xs, y, criterion)
-            rules_list.append(rule)
+            rule = RiceRule(conditions)
+            rule.fit(xs, y, criterion, cov_min)
+            if rule.out is False:
+                rules_list.append(rule)
 
     return rules_list
 
 
-def fit_pair_rules(r1_r2: Sequence[Rule], xs: np.ndarray, y: np.ndarray,
-                   criterion: str, length: int) -> Union[None, Rule]:
+def fit_pair_rules(r1_r2: Sequence[RiceRule], xs: np.ndarray, y: np.ndarray,
+                   criterion: str, length: int, cov_min: float) -> Union[None, RiceRule]:
     rule = None
     r1 = r1_r2[0]
     r2 = r1_r2[1]
@@ -112,7 +82,9 @@ def fit_pair_rules(r1_r2: Sequence[Rule], xs: np.ndarray, y: np.ndarray,
         return rule
     # noinspection PyUnresolvedReferences
     rule = r1 & r2
-    rule.fit(xs=xs, y=y, crit=criterion)
+    rule.fit(xs=xs, y=y, crit=criterion, cov_min=cov_min)
+    if rule.out:
+        rule = None
     return rule
 
 
@@ -144,8 +116,8 @@ def get_pair(rls, is_identical: bool = False):
                     yield r1, r2
 
 
-def calc_intersection(rule, ruleset, cov_min,
-                      cov_max, X=None, low_memory=False):
+def calc_intersection(rule, rs, cov_min,
+                      cov_max, xs=None, low_memory=False):
     """
     Calculation of all statistics of an rules
 
@@ -154,7 +126,7 @@ def calc_intersection(rule, ruleset, cov_min,
     rule : {rule type}
              An rule object
 
-    ruleset : {ruleset type}
+    rs : {ruleset type}
                  A set of rule
 
     cov_min : {float type such as 0 <= covmin <= 1}
@@ -163,7 +135,7 @@ def calc_intersection(rule, ruleset, cov_min,
     cov_max : {float type such as 0 <= covmax <= 1}
               The maximal coverage of one rule
 
-    X : {array-like or discretized matrix, shape = [n, d] or None}
+    xs : {array-like or discretized matrix, shape = [n, d] or None}
         The training input samples after discretization.
         If low_memory is True X must not be None
 
@@ -177,8 +149,8 @@ def calc_intersection(rule, ruleset, cov_min,
                  rules from the rules set ruleset_l1.
 
     """
-    rules_list = [rule.intersect(r, cov_min, cov_max, X, low_memory)
-                  for r in ruleset]
+    rules_list = [rule.intersect(r, cov_min, cov_max, xs, low_memory)
+                  for r in rs]
     rules_list = list(filter(None, rules_list))  # to drop bad rules
     rules_list = list(set(rules_list))
     return rules_list
@@ -237,54 +209,6 @@ def select_candidates(rs, k):
             rules_list.append(sub_rs[0])
 
     return RuleSet(rules_list)
-
-
-def get_variables_count(rs):
-    """
-    Get a counter of all different features in the ruleset
-
-    Parameters
-    ----------
-    rs : {ruleset type}
-             A set of rules
-
-    Return
-    ------
-    count : {Counter type}
-            Counter of all different features in the ruleset
-    """
-    col_varuleset = [rule.conditions.features_names
-                     for rule in rs]
-    varuleset_list = reduce(operator.add, col_varuleset)
-    count = Counter(varuleset_list)
-
-    count = count.most_common()
-    return count
-
-
-def dist(u, v):
-    """
-    Compute the distance between two prediction vector
-
-    Parameters
-    ----------
-    u,v : {array type}
-          A predictor vector. It means a sparse array with two
-          different values 0, if the rule is not active
-          and the prediction is the rule is active.
-
-    Return
-    ------
-    Distance between u and v
-    """
-    assert len(u) == len(v), \
-        'The two array must have the same length'
-    u = np.sign(u)
-    v = np.sign(v)
-    num = np.dot(u, v)
-    deno = min(np.dot(u, u),
-               np.dot(v, v))
-    return 1 - num / deno
 
 
 def mse_function(prediction_vector, y):
@@ -411,7 +335,7 @@ def significant_test(rule, ymean, sigma2, beta):
     """
     Parameters
     ----------
-    rule : {Rule type}
+    rule : {RiceRule type}
         A rule.
 
     ymean : {float type}
@@ -433,10 +357,26 @@ def significant_test(rule, ymean, sigma2, beta):
 
 
 def insignificant_test(rule, sigma2, epsilon):
+    """
+    Parameters
+    ----------
+    rule : {RiceRule type}
+        A rule.
+
+    sigma2 : {float type}
+            The noise estimator.
+
+    epsilon : {float type}
+            The epsilon factor.
+
+    Return
+    ------
+    The bound for the conditional expectation to be insignificant
+    """
     return epsilon >= np.sqrt(max(0, rule.std ** 2 - sigma2))
 
 
-def union_test(rule: Rule, act: Activation, gamma=0.80):
+def union_test(rule: RiceRule, act: Activation, gamma=0.80):
     """
     Test to know if a rule (self) and an activation vector have
     at more gamma percent of points in common
@@ -452,55 +392,6 @@ def union_test(rule: Rule, act: Activation, gamma=0.80):
     ans = (pts_inter < gamma * pts_rule) and (pts_inter < gamma * pts_act)
 
     return ans
-
-
-def calc_coverage(vect):
-    """
-    Compute the coverage rate of an activation vector
-
-    Parameters
-    ----------
-    vect : {array type}
-           A activation vector. It means a sparse array with two
-           different values 0, if the rule is not active
-           and the 1 is the rule is active.
-
-    Return
-    ------
-    cov : {float type}
-          The coverage rate
-    """
-    u = np.sign(vect)
-    return np.dot(u, u) / float(u.size)
-
-
-def calc_prediction(activation_vector, y):
-    """
-    Compute the empirical conditional expectation of y
-    knowing X
-
-    Parameters
-    ----------
-    activation_vector : {array type}
-                  A activation vector. It means a sparse array with two
-                  different values 0, if the rule is not active
-                  and the 1 is the rule is active.
-
-    y : {array type}
-        The target values (real numbers)
-
-    Return
-    ------
-    predictions : {float type}
-           The empirical conditional expectation of y
-           knowing X
-    """
-    y_cond = np.extract(activation_vector != 0, y)
-    if sum(~np.isnan(y_cond)) == 0:
-        return 0
-    else:
-        predictions = np.nanmean(y_cond)
-        return predictions
 
 
 def find_bins(x, nb_bucket):
@@ -619,7 +510,7 @@ def predict(rs: RuleSet, xs: np.ndarray, y_train: np.ndarray) -> (np.ndarray, np
         no_prediction_points = (significant_cells.sum(axis=1) == 0) & (significant_pred_matrix.sum(axis=1) != 0)
 
     else:
-        significant_cells = np.zeros(shape=(xs.shape[0], len(y_train)))
+        significant_cells = np.zeros(shape=(xs.shape[0], len(y_train)), dtype='bool')
         significant_union = np.zeros(len(y_train))
         no_prediction_points = np.zeros(xs.shape[0])
 
@@ -650,7 +541,7 @@ def predict(rs: RuleSet, xs: np.ndarray, y_train: np.ndarray) -> (np.ndarray, np
         # Calculation of the binary vector for cells of the partition et each row
         insignificant_cells = ((dot_activation - no_activation_vector) > 0)
     else:
-        insignificant_cells = np.zeros(shape=(xs.shape[0], len(y_train)))
+        insignificant_cells = np.zeros(shape=(xs.shape[0], len(y_train)), dtype='bool')
 
     # Calculation of the No-rule prediction.
     no_rule_cell = np.ones(len(y_train)) - significant_union
@@ -664,3 +555,88 @@ def predict(rs: RuleSet, xs: np.ndarray, y_train: np.ndarray) -> (np.ndarray, np
     prediction_vector[prediction_vector == 0] = no_rule_prediction
 
     return np.array(prediction_vector), no_prediction_points
+
+
+
+
+def make_condition(rule):
+    """
+    Evaluate all suitable rules (i.e satisfying all criteria)
+    on a given feature.
+    Parameters
+    ----------
+    rule : {rule type}
+           A rule
+
+    Return
+    ------
+    conditions_str : {str type}
+                     A new string for the condition of the rule
+    """
+    conditions = rule.conditions.get_attr()
+    length = len(rule)
+    conditions_str = ''
+    for i in range(length):
+        if i > 0:
+            conditions_str += ' & '
+
+        conditions_str += conditions[0][i]
+        if conditions[2][i] == conditions[3][i]:
+            conditions_str += ' = '
+            conditions_str += str(conditions[2][i])
+        else:
+            conditions_str += r' $\in$ ['
+            conditions_str += str(conditions[2][i])
+            conditions_str += ', '
+            conditions_str += str(conditions[3][i])
+            conditions_str += ']'
+
+    return conditions_str
+
+
+def get_variables_count(rs):
+    """
+    Get a counter of all different features in the ruleset
+
+    Parameters
+    ----------
+    rs : {ruleset type}
+             A set of rules
+
+    Return
+    ------
+    count : {Counter type}
+            Counter of all different features in the ruleset
+    """
+    col_varuleset = [rule.conditions.features_names
+                     for rule in rs]
+    varuleset_list = reduce(operator.add, col_varuleset)
+    count = Counter(varuleset_list)
+
+    count = count.most_common()
+    return count
+
+
+def dist(u, v):
+    """
+    Compute the distance between two prediction vector
+
+    Parameters
+    ----------
+    u,v : {array type}
+          A predictor vector. It means a sparse array with two
+          different values 0, if the rule is not active
+          and the prediction is the rule is active.
+
+    Return
+    ------
+    Distance between u and v
+    """
+    assert len(u) == len(v), \
+        'The two array must have the same length'
+    u = np.sign(u)
+    v = np.sign(v)
+    num = np.dot(u, v)
+    deno = min(np.dot(u, u),
+               np.dot(v, v))
+    return 1 - num / deno
